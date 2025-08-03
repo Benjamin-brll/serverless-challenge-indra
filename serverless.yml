@@ -1,0 +1,263 @@
+service: rimac-appointment
+
+frameworkVersion: '4'
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  region: us-east-2
+  stage: dev
+  environment:
+    APPOINTMENT_TABLE: appointmentTable
+    SNS_TOPIC_ARN:
+      Ref: appointmentTopic
+    SQS_PE_URL:
+      Fn::Sub: https://sqs.${AWS::Region}.amazonaws.com/${AWS::AccountId}/appointmentQueuePE
+    SQS_CL_URL:
+      Fn::Sub: https://sqs.${AWS::Region}.amazonaws.com/${AWS::AccountId}/appointmentQueueCL
+    EVENTBRIDGE_BUS_NAME: appointmentBus
+    RDS_HOST: appointments-db.cxka0eo8g4r1.us-east-2.rds.amazonaws.com
+    RDS_PORT: 3306
+    RDS_USER: admin
+    RDS_PASSWORD: serverlesschallenge
+    RDS_DATABASE: appointments-db
+  httpApi:
+    cors:
+      allowedOrigins:
+        - '*'
+      allowedMethods:
+        - GET
+        - POST
+        - OPTIONS
+      allowedHeaders:
+        - Content-Type
+        - Authorization
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - dynamodb:PutItem
+            - dynamodb:UpdateItem
+            - dynamodb:Query
+          Resource:
+            - arn:aws:dynamodb:us-east-2:645092490152:table/appointmentTable
+            - arn:aws:dynamodb:us-east-2:645092490152:table/appointmentTable/index/InsuredIndex
+
+        - Effect: Allow
+          Action:
+            - sns:Publish
+          Resource:
+            - !Ref appointmentTopic
+
+        - Effect: Allow
+          Action:
+            - events:PutEvents
+          Resource:
+            - arn:aws:events:us-east-2:*:event-bus/appointmentBus
+
+plugins:
+  - serverless-offline
+
+functions:
+  createAppointment:
+    handler: src/lambdas/appointment/create.handler
+    timeout: 15
+    events:
+      - httpApi:
+          path: /appointment
+          method: post
+
+  listAppointments:
+    handler: src/lambdas/appointment/list.handler
+    timeout: 15
+    events:
+      - httpApi:
+          path: /appointment/{insuredId}
+          method: get
+
+  appointment_pe:
+    handler: src/lambdas/appointment_pe/lambda-pe.handler
+    timeout: 30
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt: [appointmentQueuePE, Arn]
+
+  appointment_cl:
+    handler: src/lambdas/appointment_cl/lambda-cl.handler
+    timeout: 30
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt: [appointmentQueueCL, Arn]
+
+  updateStatus:
+    handler: src/lambdas/update_status/lambda-update.handler
+    timeout: 30
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt: [eventBridgeQueue, Arn]
+
+  getMedicalCenters:
+    handler: src/lambdas/medical_center/list.handler
+    events:
+      - httpApi:
+          path: /medical-centers/{countryISO}
+          method: get
+
+  getSpecialties:
+    handler: src/lambdas/specialty/list.handler
+    events:
+      - httpApi:
+          path: /specialties
+          method: get
+  
+  getMedics:
+    handler: src/lambdas/medic/list.handler
+    events:
+      - httpApi:
+          path: /specialties/{id}/medics
+          method: get
+
+  getSchedules:
+    handler: src/lambdas/schedule/list.handler
+    events:
+      - httpApi:
+          path: /schedules
+          method: get
+  
+  swagger:
+    handler: src/lambdas/swagger/swagger.handler
+    events:
+      - httpApi:
+          path: /swagger
+          method: GET
+
+resources:
+  Resources:
+    appointmentTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: appointmentTable
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: insuredId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: InsuredIndex
+            KeySchema:
+              - AttributeName: insuredId
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+
+    appointmentTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: appointmentTopic
+
+    snsToSqsPE:
+      Type: AWS::SNS::Subscription
+      Properties:
+        Protocol: sqs
+        TopicArn: !Ref appointmentTopic
+        Endpoint: !GetAtt appointmentQueuePE.Arn
+        FilterPolicy:
+          countryISO:
+            - PE
+
+    snsToSqsCL:
+      Type: AWS::SNS::Subscription
+      Properties:
+        Protocol: sqs
+        TopicArn: !Ref appointmentTopic
+        Endpoint: !GetAtt appointmentQueueCL.Arn
+        FilterPolicy:
+          countryISO:
+            - CL
+
+    appointmentQueuePE:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: appointmentQueuePE
+
+    appointmentQueueCL:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: appointmentQueueCL
+
+    eventBridgeQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: eventBridgeQueue
+
+    testQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: testQueue
+
+    eventBridgeBus:
+      Type: AWS::Events::EventBus
+      Properties:
+        Name: appointmentBus
+
+    eventBridgeRule:
+      Type: AWS::Events::Rule
+      Properties:
+        Name: eventBridgeRule
+        EventBusName: !Ref eventBridgeBus
+        EventPattern:
+          source:
+            - "appointment.processor"
+          detail-type:
+            - "AppointmentCompleted"
+        Targets:
+          - Arn: !GetAtt eventBridgeQueue.Arn
+            Id: "eventBridgeQueueTarget"
+
+    SQSQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - !Ref appointmentQueuePE
+          - !Ref appointmentQueueCL
+          - !Ref eventBridgeQueue
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal: "*"
+              Action: "SQS:SendMessage"
+              Resource: !GetAtt appointmentQueuePE.Arn
+              Condition:
+                ArnEquals:
+                  aws:SourceArn: !Ref appointmentTopic
+
+            - Effect: Allow
+              Principal: "*"
+              Action: "SQS:SendMessage"
+              Resource: !GetAtt appointmentQueueCL.Arn
+              Condition:
+                ArnEquals:
+                  aws:SourceArn: !Ref appointmentTopic
+
+            - Effect: Allow
+              Principal: "*"
+              Action: "SQS:SendMessage"
+              Resource: !GetAtt eventBridgeQueue.Arn
+              Condition:
+                ArnEquals:
+                  aws:SourceArn:
+                    Fn::Sub: arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/appointmentBus/eventBridgeRule
+
+package:
+  individually: true
+  include:
+    - src/lambdas/swagger/swagger.yml

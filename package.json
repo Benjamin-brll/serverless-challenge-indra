@@ -1,0 +1,40 @@
+{
+  "name": "rimac-challenge",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "directories": {
+    "test": "test"
+  },
+  "scripts": {
+    "test": "jest",
+    "start": "sls offline"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.152",
+    "@types/jest": "^30.0.0",
+    "@types/mime-types": "^3.0.1",
+    "@types/node": "^24.1.0",
+    "jest": "^30.0.5",
+    "serverless": "^4.17.2",
+    "serverless-offline": "^14.4.0",
+    "ts-jest": "^29.4.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.857.0",
+    "@aws-sdk/client-eventbridge": "^3.857.0",
+    "@aws-sdk/client-sns": "^3.857.0",
+    "@aws-sdk/client-sqs": "^3.857.0",
+    "dotenv": "^17.2.1",
+    "mime-types": "^3.0.1",
+    "mysql2": "^3.14.3",
+    "swagger-ui-dist": "^5.27.1",
+    "uuid": "^11.1.0",
+    "yaml": "^2.8.0"
+  }
+}
